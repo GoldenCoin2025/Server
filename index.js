@@ -1,27 +1,59 @@
 const WebSocket = require('ws');
 
-// Configuración del puerto (utilizamos el puerto dinámico de Railway)
-const port = process.env.PORT || 8080; // Si Railway no asigna un puerto, usará el 8080 por defecto
-
-// Crear el servidor WebSocket
+const port = process.env.PORT || 8080;
 const wss = new WebSocket.Server({ port });
 
-// Cuando un cliente se conecta
+// Almacenamiento de dispositivos
+const devices = {
+    masters: new Set(),
+    slaves: new Map() // <slaveId, WebSocket>
+};
+
 wss.on('connection', ws => {
-  console.log('Nuevo cliente conectado');
+    let deviceType = null;
+    let slaveId = null;
 
-  // Enviar un mensaje al cliente
-  ws.send('¡Conexión exitosa!');
+    ws.on('message', message => {
+        const msg = message.toString();
+        
+        // Registrar tipo de dispositivo
+        if (msg.startsWith('slave:')) {
+            slaveId = msg.split(':')[1];
+            devices.slaves.set(slaveId, ws);
+            deviceType = 'slave';
+            console.log(`Slave conectado: ${slaveId}`);
+            
+        } else if (msg.startsWith('master:')) {
+            const masterId = msg.split(':')[1];
+            devices.masters.add(ws);
+            deviceType = 'master';
+            console.log(`Master conectado: ${masterId}`);
+            
+            // Enviar lista de esclavos al maestro
+            ws.send(JSON.stringify({
+                type: 'slave_list',
+                slaves: Array.from(devices.slaves.keys())
+            }));
+        }
+        
+        // Comandos de maestro a esclavo
+        if (deviceType === 'master' && msg.startsWith('cmd:')) {
+            const [targetSlave, command] = msg.split(':').slice(2);
+            const slaveWs = devices.slaves.get(targetSlave);
+            if (slaveWs) {
+                slaveWs.send(command);
+            }
+        }
+    });
 
-  // Escuchar los mensajes recibidos del cliente
-  ws.on('message', message => {
-    console.log(`Mensaje recibido: ${message}`);
-  });
-
-  // Manejar la desconexión del cliente
-  ws.on('close', () => {
-    console.log('Cliente desconectado');
-  });
+    ws.on('close', () => {
+        if (deviceType === 'slave' && slaveId) {
+            devices.slaves.delete(slaveId);
+        } else if (deviceType === 'master') {
+            devices.masters.delete(ws);
+        }
+        console.log('Dispositivo desconectado');
+    });
 });
 
 console.log(`Servidor WebSocket escuchando en el puerto ${port}`);
