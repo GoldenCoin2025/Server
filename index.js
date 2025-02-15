@@ -1,7 +1,14 @@
+const http = require('http');
 const WebSocket = require('ws');
 
-const port = process.env.PORT || 8080;
-const wss = new WebSocket.Server({ port });
+// Crear servidor HTTP básico
+const server = http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Servidor activo');
+});
+
+// Crear WebSocket server adjunto al HTTP
+const wss = new WebSocket.Server({ server });
 
 // Almacenamiento de dispositivos
 const devices = {
@@ -9,14 +16,13 @@ const devices = {
     slaves: new Map() // <slaveId, WebSocket>
 };
 
-wss.on('connection', ws => {
+wss.on('connection', (ws) => {
     let deviceType = null;
     let slaveId = null;
 
-    ws.on('message', message => {
+    ws.on('message', (message) => {
         const msg = message.toString();
         
-        // Registrar tipo de dispositivo
         if (msg.startsWith('slave:')) {
             slaveId = msg.split(':')[1];
             devices.slaves.set(slaveId, ws);
@@ -29,18 +35,17 @@ wss.on('connection', ws => {
             deviceType = 'master';
             console.log(`Master conectado: ${masterId}`);
             
-            // Enviar lista de esclavos al maestro
+            // Enviar lista de esclavos
             ws.send(JSON.stringify({
                 type: 'slave_list',
                 slaves: Array.from(devices.slaves.keys())
             }));
         }
         
-        // Comandos de maestro a esclavo
         if (deviceType === 'master' && msg.startsWith('cmd:')) {
             const [targetSlave, command] = msg.split(':').slice(2);
             const slaveWs = devices.slaves.get(targetSlave);
-            if (slaveWs) {
+            if (slaveWs && slaveWs.readyState === WebSocket.OPEN) {
                 slaveWs.send(command);
             }
         }
@@ -49,11 +54,16 @@ wss.on('connection', ws => {
     ws.on('close', () => {
         if (deviceType === 'slave' && slaveId) {
             devices.slaves.delete(slaveId);
+            console.log(`Slave desconectado: ${slaveId}`);
         } else if (deviceType === 'master') {
             devices.masters.delete(ws);
+            console.log('Master desconectado');
         }
-        console.log('Dispositivo desconectado');
     });
 });
 
-console.log(`Servidor WebSocket escuchando en el puerto ${port}`);
+// Usar el puerto de Railway
+const port = process.env.PORT || 8080;
+server.listen(port, () => {
+    console.log(`Servidor escuchando en puerto ${port}`);
+});
