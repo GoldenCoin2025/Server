@@ -3,7 +3,7 @@ const WebSocket = require('ws');
 
 const server = http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('🔥 Remote Control Server v4 🔥');
+    res.end('🚀 Remote Control v5.0 - Funcional 🚀');
 });
 
 const wss = new WebSocket.Server({ server });
@@ -15,7 +15,7 @@ const devices = {
 
 wss.on('connection', (ws, req) => {
     const ip = req.socket.remoteAddress;
-    console.log(`[+] Nueva conexión desde: ${ip}`);
+    console.log(`[+] Conexión desde: ${ip}`);
 
     ws.on('message', (message) => {
         try {
@@ -23,11 +23,13 @@ wss.on('connection', (ws, req) => {
             console.log(`[${ip}] Mensaje: ${msg}`);
 
             if (msg.startsWith('ESCLAVO-')) {
-                handleSlave(ws, msg, ip);
+                devices.slaves.set(msg, ws);
+                console.log(`[SLAVE] ${msg} registrado`);
+                broadcastSlaves();
             } else if (msg === 'MAESTRO') {
-                handleMaster(ws, ip);
-            } else if (msg.startsWith('CMD:')) {
-                handleCommand(msg);
+                devices.masters.add(ws);
+                console.log(`[MASTER] ${ip} listo`);
+                sendSlaveList(ws); // Enviar lista INMEDIATAMENTE
             }
 
         } catch (e) {
@@ -35,53 +37,40 @@ wss.on('connection', (ws, req) => {
         }
     });
 
-    ws.on('close', () => handleDisconnect(ws, ip));
+    ws.on('close', () => {
+        devices.slaves.forEach((v, k) => { if (v === ws) devices.slaves.delete(k); });
+        devices.masters.delete(ws);
+        broadcastSlaves();
+        console.log(`[-] ${ip} desconectado`);
+    });
 });
-
-function handleSlave(ws, id, ip) {
-    devices.slaves.set(id, ws);
-    console.log(`[SLAVE] ${id} registrado`);
-    broadcastSlaves();
-}
-
-function handleMaster(ws, ip) {
-    devices.masters.add(ws);
-    console.log(`[MASTER] ${ip} autenticado`);
-    sendSlaveList(ws);
-}
-
-function handleCommand(msg) {
-    const [_, slaveId, command] = msg.split(':');
-    const slave = devices.slaves.get(slaveId);
-    if (slave?.readyState === WebSocket.OPEN) {
-        slave.send(command);
-    }
-}
-
-function handleDisconnect(ws, ip) {
-    devices.slaves.forEach((v, k) => { if (v === ws) devices.slaves.delete(k); });
-    devices.masters.delete(ws);
-    broadcastSlaves();
-    console.log(`[-] ${ip} desconectado`);
-}
 
 function broadcastSlaves() {
     const slaveList = Array.from(devices.slaves.keys());
-    const data = JSON.stringify({ action: "UPDATE", slaves: slaveList });
     devices.masters.forEach(master => {
-        if (master.readyState === WebSocket.OPEN) master.send(data);
+        if (master.readyState === WebSocket.OPEN) {
+            master.send(JSON.stringify({
+                action: "UPDATE",
+                slaves: slaveList,
+                timestamp: Date.now()
+            }));
+        }
     });
 }
 
 function sendSlaveList(ws) {
     if (ws.readyState === WebSocket.OPEN) {
         const slaveList = Array.from(devices.slaves.keys());
-        ws.send(JSON.stringify({ action: "INIT", slaves: slaveList }));
+        console.log(`[DEBUG] Enviando lista a MASTER: ${slaveList}`);
+        ws.send(JSON.stringify({
+            action: "INIT",
+            slaves: slaveList,
+            timestamp: Date.now()
+        }));
     }
 }
 
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
-    console.log(`✅ Servidor activo en puerto ${port}`);
-    console.log(`🌍 URL: ${process.env.RAILWAY_PUBLIC_DOMAIN || 'localhost'}`);
+    console.log(`✅ Servidor ACTIVO en puerto: ${port}`);
 });
