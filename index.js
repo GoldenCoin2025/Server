@@ -8,16 +8,15 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocket.Server({ server });
 
-// Almacenamiento mejorado
 const devices = {
-    slaves: new Map(),  // ID -> WS
-    masters: new Set()  // Conexiones WS
+    slaves: new Map(),
+    masters: new Set()
 };
 
-wss.on('connection', ws => {
+wss.on('connection', (ws) => {
     console.log('Nuevo cliente conectado');
 
-    ws.on('message', message => {
+    ws.on('message', (message) => {
         const msg = message.toString();
         console.log(`Mensaje recibido: ${msg}`);
 
@@ -25,8 +24,6 @@ wss.on('connection', ws => {
         if (msg.startsWith('ESCLAVO-')) {
             devices.slaves.set(msg, ws);
             console.log(`Slave registrado: ${msg}`);
-            
-            // Notificar a todos los maestros
             updateMasters();
         }
         // Registrar maestro
@@ -39,17 +36,17 @@ wss.on('connection', ws => {
         else if (msg.startsWith('CONTROL:')) {
             const [_, slaveId, command] = msg.split(':');
             const slave = devices.slaves.get(slaveId);
-            if (slave) slave.send(command);
+            if (slave && slave.readyState === WebSocket.OPEN) {
+                slave.send(command);
+            }
         }
     });
 
     ws.on('close', () => {
-        // Eliminar de la lista
         devices.slaves.forEach((value, key) => {
             if (value === ws) devices.slaves.delete(key);
         });
-        if (devices.masters.has(ws)) devices.masters.delete(ws);
-        
+        devices.masters.delete(ws);
         console.log('Cliente desconectado');
         updateMasters();
     });
@@ -61,7 +58,8 @@ function updateMasters() {
         if (master.readyState === WebSocket.OPEN) {
             master.send(JSON.stringify({
                 type: 'slave_list',
-                slaves: slaveList
+                slaves: slaveList,
+                count: slaveList.length
             }));
         }
     });
@@ -69,9 +67,11 @@ function updateMasters() {
 
 function sendSlaveList(ws) {
     if (ws.readyState === WebSocket.OPEN) {
+        const slaveList = Array.from(devices.slaves.keys());
         ws.send(JSON.stringify({
             type: 'slave_list',
-            slaves: Array.from(devices.slaves.keys())
+            slaves: slaveList,
+            count: slaveList.length
         }));
     }
 }
