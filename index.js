@@ -3,15 +3,10 @@ const WebSocket = require('ws');
 
 const server = http.createServer((req, res) => {
     res.writeHead(200);
-    res.end('Servidor Activo - Remote Control v1.0');
+    res.end('Servidor Activo - Remote Control v2.0');
 });
 
-const wss = new WebSocket.Server({ 
-    server,
-    perMessageDeflate: {
-        zlibDeflateOptions: { level: 1 }
-    }
-});
+const wss = new WebSocket.Server({ server });
 
 const devices = {
     slaves: new Map(),
@@ -24,7 +19,8 @@ wss.on('connection', (ws) => {
     ws.on('message', (message) => {
         try {
             const msg = message.toString();
-            
+            console.log(`[DEBUG] Mensaje recibido: ${msg}`);
+
             // Registrar esclavo
             if (msg.startsWith('ESCLAVO-')) {
                 devices.slaves.set(msg, ws);
@@ -36,14 +32,6 @@ wss.on('connection', (ws) => {
                 devices.masters.add(ws);
                 console.log('[MASTER] Nuevo controlador conectado');
                 sendSlaveList(ws);
-            }
-            // Comandos de control
-            else if (msg.startsWith('CMD:')) {
-                const [_, slaveId, command] = msg.split(':', 3);
-                const slave = devices.slaves.get(slaveId);
-                if (slave?.readyState === WebSocket.OPEN) {
-                    slave.send(command);
-                }
             }
         } catch (e) {
             console.error('[ERROR]', e.message);
@@ -84,5 +72,5 @@ function sendSlaveList(ws) {
 
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
-    console.log(`🚀 Servidor activo en puerto ${port}`);
+    console.log(`🚀 Servidor escuchando en http://localhost:${port}`);
 });
