@@ -23,21 +23,27 @@ wss.on('connection', (ws, req) => {
             console.log(`[${ip}] Mensaje: ${msg}`);
 
             if (msg.startsWith('ESCLAVO-')) {
+                // Registrar dispositivo esclavo
                 devices.slaves.set(msg, ws);
                 console.log(`[SLAVE] ${msg} registrado`);
                 broadcastSlaves();
             } else if (msg === 'MAESTRO') {
+                // Registrar dispositivo maestro
                 devices.masters.add(ws);
                 console.log(`[MASTER] ${ip} listo`);
                 sendSlaveList(ws); // Enviar lista INMEDIATAMENTE
+            } else if (msg.startsWith('START_SCREENSHARE:')) {
+                // Comando para capturar pantalla
+                const slaveId = msg.replace('START_SCREENSHARE:', '');
+                startScreenShareCommand(slaveId);
             }
-
         } catch (e) {
             console.error(`[ERROR] ${ip}: ${e.message}`);
         }
     });
 
     ws.on('close', () => {
+        // Eliminar esclavo o maestro desconectado
         devices.slaves.forEach((v, k) => { if (v === ws) devices.slaves.delete(k); });
         devices.masters.delete(ws);
         broadcastSlaves();
@@ -45,6 +51,7 @@ wss.on('connection', (ws, req) => {
     });
 });
 
+// Función para enviar lista de esclavos a los maestros
 function broadcastSlaves() {
     const slaveList = Array.from(devices.slaves.keys());
     devices.masters.forEach(master => {
@@ -58,6 +65,7 @@ function broadcastSlaves() {
     });
 }
 
+// Función para enviar la lista de esclavos a un maestro específico
 function sendSlaveList(ws) {
     if (ws.readyState === WebSocket.OPEN) {
         const slaveList = Array.from(devices.slaves.keys());
@@ -70,6 +78,26 @@ function sendSlaveList(ws) {
     }
 }
 
+// Función para enviar el comando de captura de pantalla a un esclavo
+function startScreenShareCommand(slaveId) {
+    const slaveSocket = devices.slaves.get(slaveId);
+    if (slaveSocket) {
+        // Enviar comando al esclavo para iniciar la captura de pantalla
+        if (slaveSocket.readyState === WebSocket.OPEN) {
+            slaveSocket.send(JSON.stringify({
+                action: "START_SCREENSHARE",
+                timestamp: Date.now()
+            }));
+            console.log(`[COMMAND] Enviado comando START_SCREENSHARE al esclavo ${slaveId}`);
+        } else {
+            console.log(`[ERROR] El esclavo ${slaveId} no está disponible`);
+        }
+    } else {
+        console.log(`[ERROR] Esclavo con ID ${slaveId} no encontrado`);
+    }
+}
+
+// Iniciar servidor
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
     console.log(`✅ Servidor ACTIVO en puerto: ${port}`);
