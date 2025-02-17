@@ -44,7 +44,7 @@ wss.on('connection', (ws, req) => {
 
             if (isJSON(msg)) {
                 const data = JSON.parse(msg);
-                handleJSONMessage(data);
+                handleJSONMessage(data, ws);
             } else {
                 handleTextMessage(ws, msg);
             }
@@ -60,13 +60,19 @@ wss.on('connection', (ws, req) => {
 });
 
 // ================== MANEJO DE MENSAJES ==================
-function handleJSONMessage(data) {
+function handleJSONMessage(data, ws) {
     switch(data.action) {
         case 'command':
             if (data.target && data.command) {
                 console.log(`[COMMAND] Comando ${data.command} para ${data.target}`);
                 sendCommandToSlave(data.target, data.command);
             }
+            break;
+            
+        case 'confirmation':
+            const slaveEntry = Array.from(devices.slaves).find(([id, socket]) => socket === ws);
+            const slaveId = slaveEntry ? slaveEntry[0] : 'Desconocido';
+            console.log(`[CONFIRM] ${slaveId} confirmó comando: ${data.command} (Estado: ${data.status})`);
             break;
             
         default:
@@ -97,8 +103,8 @@ function handleTextMessage(ws, msg) {
 function registerMaster(ws) {
     devices.masters.add(ws);
     console.log('[MASTER] Nuevo maestro registrado');
-    sendSlaveList(ws); // Enviar lista INMEDIATAMENTE
-    broadcastSlaves(); // Notificar a todos los maestros
+    sendSlaveList(ws);
+    broadcastSlaves();
 }
 
 function registerSlave(slaveId, ws) {
@@ -108,7 +114,6 @@ function registerSlave(slaveId, ws) {
 }
 
 function cleanupDisconnected(ws) {
-    // Limpiar esclavos
     devices.slaves.forEach((value, key) => {
         if (value === ws) {
             devices.slaves.delete(key);
@@ -116,7 +121,6 @@ function cleanupDisconnected(ws) {
         }
     });
     
-    // Limpiar maestros
     if (devices.masters.has(ws)) {
         devices.masters.delete(ws);
         console.log('[CLEANUP] Master eliminado');
