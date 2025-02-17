@@ -1,18 +1,22 @@
 const http = require('http');
 const WebSocket = require('ws');
 
+// Crear el servidor HTTP
 const server = http.createServer((req, res) => {
     res.writeHead(200);
     res.end('🚀 Remote Control v5.0 - Funcional 🚀');
 });
 
+// Crear el servidor WebSocket
 const wss = new WebSocket.Server({ server });
 
+// Estructura para almacenar los dispositivos conectados
 const devices = {
-    slaves: new Map(),
-    masters: new Set()
+    slaves: new Map(), // Dispositivos esclavos
+    masters: new Set() // Dispositivos maestros
 };
 
+// Lógica para manejar conexiones WebSocket
 wss.on('connection', (ws, req) => {
     const ip = req.socket.remoteAddress;
     console.log(`[+] Conexión desde: ${ip}`);
@@ -26,12 +30,16 @@ wss.on('connection', (ws, req) => {
                 // Registrar dispositivo esclavo
                 devices.slaves.set(msg, ws);
                 console.log(`[SLAVE] ${msg} registrado`);
-                broadcastSlaves();
+                broadcastSlaves();  // Actualizar lista de esclavos a los maestros
             } else if (msg === 'MAESTRO') {
                 // Registrar dispositivo maestro
                 devices.masters.add(ws);
                 console.log(`[MASTER] ${ip} listo`);
-                sendSlaveList(ws); // Enviar lista INMEDIATAMENTE
+                sendSlaveList(ws);  // Enviar lista de esclavos al maestro cuando se conecta
+            } else if (msg === 'ACTUALIZAR_LISTA') {
+                // Solicitud para actualizar la lista de esclavos
+                console.log(`[MASTER] Solicitando actualización de lista`);
+                sendSlaveList(ws);  // Enviar lista de esclavos al maestro que hizo la solicitud
             } else if (msg.startsWith('START_SCREENSHARE:')) {
                 // Comando para capturar pantalla
                 const slaveId = msg.replace('START_SCREENSHARE:', '');
@@ -47,14 +55,14 @@ wss.on('connection', (ws, req) => {
         // Eliminar esclavo o maestro desconectado
         devices.slaves.forEach((v, k) => { if (v === ws) devices.slaves.delete(k); });
         devices.masters.delete(ws);
-        broadcastSlaves();
+        broadcastSlaves();  // Actualizar lista de esclavos a los maestros
         console.log(`[-] ${ip} desconectado`);
     });
 });
 
-// Función para enviar lista de esclavos a los maestros
+// Función para enviar lista de esclavos a todos los maestros conectados
 function broadcastSlaves() {
-    const slaveList = Array.from(devices.slaves.keys());
+    const slaveList = Array.from(devices.slaves.keys()); // Lista de esclavos
     devices.masters.forEach(master => {
         if (master.readyState === WebSocket.OPEN) {
             master.send(JSON.stringify({
@@ -69,7 +77,7 @@ function broadcastSlaves() {
 // Función para enviar la lista de esclavos a un maestro específico
 function sendSlaveList(ws) {
     if (ws.readyState === WebSocket.OPEN) {
-        const slaveList = Array.from(devices.slaves.keys());
+        const slaveList = Array.from(devices.slaves.keys()); // Lista de esclavos
         console.log(`[DEBUG] Enviando lista a MASTER: ${slaveList}`);
         ws.send(JSON.stringify({
             action: "INIT",
@@ -113,7 +121,7 @@ function startScreenShareCommand(slaveId) {
     });
 }
 
-// Iniciar servidor
+// Iniciar el servidor HTTP en el puerto configurado
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
     console.log(`✅ Servidor ACTIVO en puerto: ${port}`);
