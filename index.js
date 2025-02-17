@@ -36,15 +36,17 @@ wss.on('connection', (ws, req) => {
                 devices.masters.add(ws);
                 console.log(`[MASTER] ${ip} listo`);
                 sendSlaveList(ws);  // Enviar la lista INMEDIATAMENTE
-            } else if (msg.startsWith('START_SCREENSHARE:')) {
-                // Comando para capturar pantalla
-                const slaveId = msg.replace('START_SCREENSHARE:', '');
-                console.log(`[DEBUG] Comando de captura de pantalla para esclavo ${slaveId}`);
-                startScreenShareCommand(slaveId);
             } else if (msg === 'ACTUALIZAR_LISTA') {
                 // Solicitar la lista de esclavos
                 console.log(`[${ip}] Solicitud de actualización de lista`);
                 sendSlaveList(ws);  // Enviar lista de esclavos al maestro
+            } else if (msg.startsWith('COMANDO:')) {
+                // Comando enviado por el maestro al esclavo
+                const [comando, slaveId] = parseComando(msg);
+                if (comando && slaveId) {
+                    console.log(`[COMMAND] Enviando comando ${comando} al esclavo ${slaveId}`);
+                    sendCommandToSlave(slaveId, comando);
+                }
             }
         } catch (e) {
             console.error(`[ERROR] ${ip}: ${e.message}`);
@@ -102,8 +104,8 @@ function sendSlaveList(ws) {
     }
 }
 
-// Función para enviar el comando de captura de pantalla a un esclavo
-function startScreenShareCommand(slaveId) {
+// Función para enviar el comando de un maestro a un esclavo
+function sendCommandToSlave(slaveId, comando) {
     console.log(`[DEBUG] Verificando si el esclavo ${slaveId} está registrado...`);
     const slaveSocket = devices.slaves.get(slaveId);
     
@@ -118,22 +120,24 @@ function startScreenShareCommand(slaveId) {
         return;
     }
 
-    console.log(`[DEBUG] Enviando comando START_SCREENSHARE al esclavo ${slaveId}`);
+    console.log(`[DEBUG] Enviando comando ${comando} al esclavo ${slaveId}`);
     slaveSocket.send(JSON.stringify({
-        action: "START_SCREENSHARE",
+        action: "COMMAND",
+        command: comando,
         timestamp: Date.now()
     }));
     
     // Confirmar el envío del comando
-    console.log(`[COMMAND] Comando START_SCREENSHARE enviado al esclavo ${slaveId}`);
-    
-    // Esperar respuesta del esclavo (simulación de procesamiento)
-    slaveSocket.on('message', (response) => {
-        const data = JSON.parse(response);
-        if (data.action === 'SCREENSHARE_STARTED') {
-            console.log(`[DEBUG] El esclavo ${slaveId} ha comenzado la captura de pantalla.`);
-        }
-    });
+    console.log(`[COMMAND] Comando ${comando} enviado al esclavo ${slaveId}`);
+}
+
+// Función para parsear el mensaje del comando y extraer el esclavo y el comando
+function parseComando(msg) {
+    const match = msg.match(/^COMANDO: (.*?) a (ESCLAVO-.*)$/);
+    if (match) {
+        return [match[1], match[2]];  // [comando, slaveId]
+    }
+    return [null, null];
 }
 
 // Iniciar servidor HTTP en el puerto especificado
