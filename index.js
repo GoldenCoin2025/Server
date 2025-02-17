@@ -12,8 +12,8 @@ const wss = new WebSocket.Server({ server });
 
 // Mapa para almacenar los dispositivos esclavos y maestros
 const devices = {
-    slaves: new Map(),
-    masters: new Set()
+    slaves: new Map(),  // Almacena los esclavos (ID del esclavo -> WebSocket)
+    masters: new Set()   // Almacena los maestros (WebSocket)
 };
 
 // Establecer conexión de WebSocket
@@ -41,6 +41,10 @@ wss.on('connection', (ws, req) => {
                 const slaveId = msg.replace('START_SCREENSHARE:', '');
                 console.log(`[DEBUG] Comando de captura de pantalla para esclavo ${slaveId}`);
                 startScreenShareCommand(slaveId);
+            } else if (msg === 'ACTUALIZAR_LISTA') {
+                // Solicitar la lista de esclavos
+                console.log(`[${ip}] Solicitud de actualización de lista`);
+                sendSlaveList(ws);  // Enviar lista de esclavos al maestro
             }
         } catch (e) {
             console.error(`[ERROR] ${ip}: ${e.message}`);
@@ -57,8 +61,20 @@ wss.on('connection', (ws, req) => {
     });
 });
 
+// Función para eliminar esclavos desconectados de la lista
+function cleanDisconnectedSlaves() {
+    devices.slaves.forEach((ws, slaveId) => {
+        if (ws.readyState !== WebSocket.OPEN) {
+            console.log(`[DEBUG] El esclavo ${slaveId} está desconectado, eliminándolo de la lista`);
+            devices.slaves.delete(slaveId);
+        }
+    });
+}
+
 // Función para enviar lista de esclavos a los maestros
 function broadcastSlaves() {
+    cleanDisconnectedSlaves();  // Limpiar esclavos desconectados antes de enviar la lista
+
     const slaveList = Array.from(devices.slaves.keys());
     devices.masters.forEach(master => {
         if (master.readyState === WebSocket.OPEN) {
@@ -73,6 +89,8 @@ function broadcastSlaves() {
 
 // Función para enviar la lista de esclavos a un maestro específico
 function sendSlaveList(ws) {
+    cleanDisconnectedSlaves();  // Limpiar esclavos desconectados antes de enviar la lista
+
     if (ws.readyState === WebSocket.OPEN) {
         const slaveList = Array.from(devices.slaves.keys());
         console.log(`[DEBUG] Enviando lista a MASTER: ${slaveList}`);
