@@ -10,8 +10,7 @@ const wss = new WebSocket.Server({ server });
 
 const devices = {
     slaves: new Map(),
-    masters: new Set(),
-    streams: new Set() // Nuevo: Para trackear streams activos
+    masters: new Set()
 };
 
 // ================== FUNCIONES AUXILIARES ==================
@@ -38,20 +37,16 @@ wss.on('connection', (ws, req) => {
     const ip = req.socket.remoteAddress;
     console.log(`[+] Conexión desde: ${ip}`);
 
-    ws.on('message', (message, isBinary) => { // Modificado para soportar binario
+    ws.on('message', (message) => {
         try {
-            if (isBinary) {
-                handleBinaryMessage(message, ws);
-            } else {
-                const msg = message.toString();
-                console.log(`[${ip}] Mensaje recibido: ${msg}`);
+            const msg = message.toString();
+            console.log(`[${ip}] Mensaje recibido: ${msg}`);
 
-                if (isJSON(msg)) {
-                    const data = JSON.parse(msg);
-                    handleJSONMessage(data, ws);
-                } else {
-                    handleTextMessage(ws, msg);
-                }
+            if (isJSON(msg)) {
+                const data = JSON.parse(msg);
+                handleJSONMessage(data, ws);
+            } else {
+                handleTextMessage(ws, msg);
             }
         } catch (e) {
             console.error(`[ERROR] ${ip}: ${e.message}`);
@@ -64,33 +59,7 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// ================== MANEJO DE BINARIOS (STREAMING) ==================
-function handleBinaryMessage(frame, ws) {
-    const slaveEntry = Array.from(devices.slaves).find(([id, socket]) => socket === ws);
-    if (slaveEntry) {
-        const [slaveId] = slaveEntry;
-        broadcastFrameToMasters(frame, slaveId);
-    }
-}
-
-function broadcastFrameToMasters(frame, slaveId) {
-    const header = Buffer.alloc(4);
-    header.writeUInt32BE(slaveId.length, 0);
-    
-    const packet = Buffer.concat([
-        header,
-        Buffer.from(slaveId),
-        frame
-    ]);
-    
-    devices.masters.forEach(master => {
-        if (master.readyState === WebSocket.OPEN) {
-            master.send(packet, { binary: true });
-        }
-    });
-}
-
-// ================== MANEJO DE MENSAJES ACTUALIZADO ==================
+// ================== MANEJO DE MENSAJES ==================
 function handleJSONMessage(data, ws) {
     switch(data.action) {
         case 'command':
@@ -106,44 +75,45 @@ function handleJSONMessage(data, ws) {
             console.log(`[CONFIRM] ${slaveId} confirmó comando: ${data.command} (Estado: ${data.status})`);
             break;
             
-        case 'start_stream': // Nuevo comando
-            if (data.target) {
-                console.log(`[STREAM] Iniciando transmisión de ${data.target}`);
-                devices.streams.add(data.target);
-                sendCommandToSlave(data.target, 'START_STREAM');
-            }
-            break;
-            
-        case 'stop_stream': // Nuevo comando
-            if (data.target) {
-                console.log(`[STREAM] Deteniendo transmisión de ${data.target}`);
-                devices.streams.delete(data.target);
-                sendCommandToSlave(data.target, 'STOP_STREAM');
-            }
-            break;
-            
         default:
             console.log(`[ACTION DESCONOCIDA] ${JSON.stringify(data)}`);
     }
 }
 
-// ================== FUNCIONES PRINCIPALES MODIFICADAS ==================
+function handleTextMessage(ws, msg) {
+    switch(msg) {
+        case 'MAESTRO':
+            registerMaster(ws);
+            break;
+            
+        case 'ACTUALIZAR_LISTA':
+            sendSlaveList(ws);
+            break;
+            
+        default:
+            if (msg.startsWith('ESCLAVO-')) {
+                registerSlave(msg, ws);
+            } else {
+                console.log(`[MENSAJE TEXTO] ${msg}`);
+            }
+    }
+}
+
+// ================== FUNCIONES PRINCIPALES ==================
+function registerMaster(ws) {
+    devices.masters.add(ws);
+    console.log('[MASTER] Nuevo maestro registrado');
+    sendSlaveList(ws);
+    broadcastSlaves();
+}
+
+function registerSlave(slaveId, ws) {
+    devices.slaves.set(slaveId, ws);
+    console.log(`[SLAVE] ${slaveId} registrado`);
+    broadcastSlaves();
+}
+
 function cleanupDisconnected(ws) {
-    // Notificar a masters si un esclavo en streaming se desconecta
-    devices.slaves.forEach((value, key) => {
-        if (value === ws && devices.streams.has(key)) {
-            devices.masters.forEach(master => {
-                master.send(JSON.stringify({
-                    action: "stream_end",
-                    slaveId: key,
-                    reason: "disconnected"
-                }));
-            });
-            devices.streams.delete(key);
-        }
-    });
-    
-    // Resto de la lógica original...
     devices.slaves.forEach((value, key) => {
         if (value === ws) {
             devices.slaves.delete(key);
@@ -159,11 +129,60 @@ function cleanupDisconnected(ws) {
     broadcastSlaves();
 }
 
-// Resto del código se mantiene igual...
+function sendCommandToSlave(slaveId, command) {
+    const slaveSocket = devices.slaves.get(slaveId);
+    
+    if (!slaveSocket) {
+        console.log(`[ERROR] Esclavo ${slaveId} no encontrado`);
+        return;
+    }
+    
+    if (slaveSocket.readyState === WebSocket.OPEN) {
+        slaveSocket.send(JSON.stringify({
+            action: "execute",
+            command: command,
+            timestamp: Date.now()
+        }));
+        console.log(`[COMMAND_OK] ${command} enviado a ${slaveId}`);
+    } else {
+        console.log(`[ERROR] Esclavo ${slaveId} no conectado`);
+    }
+}
+
+// ================== ACTUALIZACIÓN DE LISTAS ==================
+function broadcastSlaves() {
+    cleanDisconnectedSlaves();
+    const slaveList = Array.from(devices.slaves.keys());
+    
+    devices.masters.forEach(master => {
+        if (master.readyState === WebSocket.OPEN) {
+            master.send(JSON.stringify({
+                action: "update",
+                slaves: slaveList,
+                count: slaveList.length,
+                timestamp: Date.now()
+            }));
+        }
+    });
+}
+
+function sendSlaveList(ws) {
+    cleanDisconnectedSlaves();
+    const slaveList = Array.from(devices.slaves.keys());
+    
+    if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            action: "init",
+            slaves: slaveList,
+            count: slaveList.length,
+            timestamp: Date.now()
+        }));
+        console.log(`[LIST_SENT] Lista enviada a maestro (${slaveList.length} esclavos)`);
+    }
+}
 
 // ================== INICIAR SERVIDOR ==================
 const port = process.env.PORT || 8080;
 server.listen(port, () => {
     console.log(`✅ Servidor ACTIVO en puerto: ${port}`);
-    console.log(`🔥 Modo streaming habilitado`);
 });
